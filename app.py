@@ -45,12 +45,12 @@ def generate_llm_insight(
     budget_action
 ):
     if client is None:
-        return "OPENAI_API_KEY not found. Add it in Streamlit Cloud Secrets."
+        return "AI insights are currently unavailable because no API key is configured."
 
     prompt = f"""
 You are a senior marketing performance analyst.
 
-Analyze this campaign and write:
+Analyze this campaign and provide:
 1. A short diagnosis
 2. One clear business recommendation
 
@@ -72,8 +72,8 @@ Budget Action: {budget_action}
             input=prompt
         )
         return response.output_text.strip()
-    except Exception as e:
-        return f"Error generating insight: {e}"
+    except Exception:
+        return "AI insights are temporarily unavailable due to API quota or configuration limits. Please refer to the rule-based recommendations section above."
 
 # -----------------------------
 # SIDEBAR
@@ -208,7 +208,7 @@ else:
 st.divider()
 
 # -----------------------------
-# RULE-BASED AI RECOMMENDATIONS
+# RULE-BASED RECOMMENDATIONS
 # -----------------------------
 st.subheader("Automated Recommendation Narratives")
 
@@ -227,7 +227,9 @@ st.divider()
 # -----------------------------
 st.subheader("LLM-Generated AI Insights")
 
-if len(filtered_optimizer) > 0:
+if client is None:
+    st.info("AI insights are currently disabled because no API key is configured.")
+elif len(filtered_optimizer) > 0:
     llm_view = filtered_optimizer[
         [
             "campaign_name",
@@ -239,10 +241,7 @@ if len(filtered_optimizer) > 0:
             "campaign_health",
             "budget_action"
         ]
-    ].copy()
-
-    # Keep this small initially to reduce latency and API usage
-    llm_view = llm_view.head(5)
+    ].copy().head(5)
 
     for _, row in llm_view.iterrows():
         with st.expander(f"{row['campaign_name']} — AI Insight"):
