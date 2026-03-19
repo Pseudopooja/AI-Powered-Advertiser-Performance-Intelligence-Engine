@@ -1,15 +1,40 @@
 import os
 import pandas as pd
 import streamlit as st
-import os
-from groq import Groq
 
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+# Optional Groq import
+try:
+    from groq import Groq
+except ImportError:
+    Groq = None
 
 st.set_page_config(
-    page_title="Advertiser Performance Intelligence Engine",
+    page_title="AI-Assisted Advertiser Performance Intelligence Engine",
     layout="wide"
 )
+
+# -----------------------------
+# CUSTOM STYLING
+# -----------------------------
+st.markdown("""
+<style>
+.block-container {
+    padding-top: 2rem;
+    padding-bottom: 2rem;
+    padding-left: 3rem;
+    padding-right: 3rem;
+}
+[data-testid="stMetric"] {
+    background-color: #f7f9fc;
+    border: 1px solid #e6eaf2;
+    padding: 14px;
+    border-radius: 14px;
+}
+h1, h2, h3 {
+    color: #1f2937;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # -----------------------------
 # LOAD DATA
@@ -28,13 +53,19 @@ if "date" in anomaly_df.columns:
     anomaly_df["date"] = pd.to_datetime(anomaly_df["date"])
 
 # -----------------------------
-# OPENAI CLIENT
+# GROQ CLIENT
 # -----------------------------
-api_key = os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=api_key) if api_key else None
+groq_api_key = os.getenv("GROQ_API_KEY")
+client = None
+
+if Groq is not None and groq_api_key:
+    try:
+        client = Groq(api_key=groq_api_key)
+    except Exception:
+        client = None
 
 # -----------------------------
-# LLM INSIGHT FUNCTION
+# GROQ INSIGHT FUNCTION
 # -----------------------------
 @st.cache_data(show_spinner=False)
 def generate_llm_insight(
@@ -48,7 +79,7 @@ def generate_llm_insight(
     budget_action
 ):
     if client is None:
-        return "AI insights are currently unavailable because no API key is configured."
+        return "Live AI insight is unavailable right now. Showing rule-based recommendation logic elsewhere in the dashboard."
 
     prompt = f"""
 You are a senior marketing performance analyst.
@@ -70,16 +101,21 @@ Budget Action: {budget_action}
 """
 
     try:
-        response = client.responses.create(
-            model="gpt-5.4",
-            input=prompt
+        response = client.chat.completions.create(
+            model="llama3-8b-8192",
+            messages=[
+                {"role": "system", "content": "You are a precise marketing analytics expert."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.4,
+            max_tokens=120
         )
-        return response.output_text.strip()
+        return response.choices[0].message.content.strip()
     except Exception:
-        return "AI insights are temporarily unavailable due to API quota or configuration limits. Please refer to the rule-based recommendations section above."
+        return "Live AI insight is temporarily unavailable due to API quota or configuration limits. Please refer to the recommendation narratives section."
 
 # -----------------------------
-# SIDEBAR
+# SIDEBAR FILTERS
 # -----------------------------
 st.sidebar.title("Filters")
 
@@ -115,16 +151,14 @@ if selected_channel != "All":
 # -----------------------------
 # HEADER
 # -----------------------------
-st.title("AI-Powered Advertiser Performance Intelligence Engine")
-st.markdown(
-    """
-This dashboard evaluates campaign performance using SQL- and Python-driven logic to analyze
-**CTR, CVR, CPA, ROI**, detect anomalies, and recommend budget reallocation actions.
-"""
-)
+st.title("AI-Assisted Advertiser Performance Intelligence Engine")
+st.markdown("""
+A decision-support dashboard that analyzes campaign performance using **CTR, CVR, CPA, and ROI**,
+detects anomalies, and recommends **budget reallocation actions** to improve advertiser efficiency.
+""")
 
 # -----------------------------
-# KPI CARDS
+# KPI SUMMARY
 # -----------------------------
 total_campaigns = len(filtered_score)
 avg_roi = round(filtered_score["avg_roi"].mean(), 2) if total_campaigns > 0 else 0
@@ -132,32 +166,55 @@ avg_cpa = round(filtered_score["avg_cpa"].mean(), 2) if total_campaigns > 0 else
 avg_ctr = round(filtered_score["avg_ctr"].mean(), 4) if total_campaigns > 0 else 0
 avg_cvr = round(filtered_score["avg_cvr"].mean(), 4) if total_campaigns > 0 else 0
 
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Campaigns", total_campaigns)
-c2.metric("Avg ROI", avg_roi)
-c3.metric("Avg CPA", avg_cpa)
-c4.metric("Avg CTR", avg_ctr)
-c5.metric("Avg CVR", avg_cvr)
+healthy_count = (filtered_score["campaign_health"] == "Healthy").sum() if "campaign_health" in filtered_score.columns else 0
+watchlist_count = (filtered_score["campaign_health"] == "Watchlist").sum() if "campaign_health" in filtered_score.columns else 0
+critical_count = (filtered_score["campaign_health"] == "Critical").sum() if "campaign_health" in filtered_score.columns else 0
+
+increase_count = filtered_optimizer["budget_action"].astype(str).str.contains("Increase", na=False).sum() if "budget_action" in filtered_optimizer.columns else 0
+decrease_count = filtered_optimizer["budget_action"].astype(str).str.contains("Decrease", na=False).sum() if "budget_action" in filtered_optimizer.columns else 0
+monitor_count = filtered_optimizer["budget_action"].astype(str).str.contains("Maintain", na=False).sum() if "budget_action" in filtered_optimizer.columns else 0
+
+m1, m2, m3, m4, m5, m6 = st.columns(6)
+m1.metric("Campaigns", total_campaigns)
+m2.metric("Avg ROI", avg_roi)
+m3.metric("Avg CPA", avg_cpa)
+m4.metric("Healthy", healthy_count)
+m5.metric("Watchlist", watchlist_count)
+m6.metric("Critical", critical_count)
+
+st.success(
+    f"Executive takeaway: {increase_count} campaign(s) are recommended for budget increases, "
+    f"{decrease_count} should be reduced, and {monitor_count} require monitoring."
+)
 
 st.divider()
 
 # -----------------------------
-# CAMPAIGN LEADERBOARD
+# CHARTS
 # -----------------------------
-st.subheader("Campaign Leaderboard")
+c1, c2 = st.columns(2)
 
-leaderboard_cols = [
-    "campaign_name", "campaign_profile", "channel", "avg_ctr", "avg_cvr",
-    "avg_cpa", "avg_roi", "anomaly_count", "performance_score", "campaign_health"
-]
+with c1:
+    st.subheader("Top Campaigns by Performance Score")
+    if len(filtered_score) > 0:
+        perf_chart = (
+            filtered_score[["campaign_name", "performance_score"]]
+            .sort_values("performance_score", ascending=False)
+            .head(8)
+            .set_index("campaign_name")
+        )
+        st.bar_chart(perf_chart)
 
-if len(filtered_score) > 0:
-    st.dataframe(
-        filtered_score[leaderboard_cols].sort_values("performance_score", ascending=False),
-        use_container_width=True
-    )
-else:
-    st.info("No campaign data available for the selected filters.")
+with c2:
+    st.subheader("Average ROI by Campaign")
+    if len(filtered_score) > 0:
+        roi_chart = (
+            filtered_score[["campaign_name", "avg_roi"]]
+            .sort_values("avg_roi", ascending=False)
+            .head(8)
+            .set_index("campaign_name")
+        )
+        st.bar_chart(roi_chart)
 
 st.divider()
 
@@ -169,130 +226,127 @@ left, right = st.columns(2)
 with left:
     st.subheader("Top Performers")
     if len(filtered_score) > 0:
-        top_df = filtered_score.sort_values("performance_score", ascending=False).head(5)
-        st.dataframe(
-            top_df[["campaign_name", "performance_score", "avg_roi", "avg_cpa", "campaign_health"]],
-            use_container_width=True
+        top_df = (
+            filtered_score[["campaign_name", "performance_score", "avg_roi", "avg_cpa", "campaign_health"]]
+            .sort_values("performance_score", ascending=False)
+            .head(5)
+            .reset_index(drop=True)
         )
-    else:
-        st.info("No top performers to display.")
+        st.dataframe(top_df, use_container_width=True, hide_index=True)
 
 with right:
     st.subheader("Bottom Performers")
     if len(filtered_score) > 0:
-        bottom_df = filtered_score.sort_values("performance_score", ascending=True).head(5)
-        st.dataframe(
-            bottom_df[["campaign_name", "performance_score", "avg_roi", "avg_cpa", "campaign_health"]],
-            use_container_width=True
+        bottom_df = (
+            filtered_score[["campaign_name", "performance_score", "avg_roi", "avg_cpa", "campaign_health"]]
+            .sort_values("performance_score", ascending=True)
+            .head(5)
+            .reset_index(drop=True)
         )
-    else:
-        st.info("No bottom performers to display.")
+        st.dataframe(bottom_df, use_container_width=True, hide_index=True)
 
 st.divider()
 
 # -----------------------------
-# BUDGET RECOMMENDATIONS
+# OPTIMIZATION ACTIONS
 # -----------------------------
-st.subheader("Budget Reallocation Recommendations")
-
-budget_cols = [
-    "campaign_name", "campaign_profile", "channel", "avg_roi", "avg_cpa",
-    "avg_cvr", "performance_score", "campaign_health", "budget_action", "recommendation_reason"
-]
+st.subheader("Optimization Actions")
 
 if len(filtered_optimizer) > 0:
-    st.dataframe(
-        filtered_optimizer[budget_cols].sort_values("performance_score", ascending=False),
-        use_container_width=True
-    )
-else:
-    st.info("No budget recommendations available.")
+    action_df = filtered_optimizer[[
+        "campaign_name", "channel", "avg_roi", "avg_cpa", "avg_cvr",
+        "performance_score", "campaign_health", "budget_action", "recommendation_reason"
+    ]].copy()
+
+    action_df = action_df.sort_values("performance_score", ascending=False).reset_index(drop=True)
+    st.dataframe(action_df, use_container_width=True, hide_index=True)
 
 st.divider()
 
 # -----------------------------
-# RULE-BASED RECOMMENDATIONS
+# RECOMMENDATION NARRATIVES
 # -----------------------------
-st.subheader("Automated Recommendation Narratives")
+st.subheader("Recommendation Narratives")
 
 if len(filtered_recommendation) > 0:
-    for _, row in filtered_recommendation.iterrows():
+    rec_view = filtered_recommendation[[
+        "campaign_name", "campaign_health", "budget_action", "ai_recommendation"
+    ]].copy()
+
+    for _, row in rec_view.iterrows():
         with st.expander(f"{row['campaign_name']} — {row['budget_action']}"):
-            st.write(f"**Health:** {row['campaign_health']}")
-            st.write(f"**Recommendation:** {row['ai_recommendation']}")
-else:
-    st.info("No automated recommendations available.")
+            st.markdown(f"**Campaign Health:** {row['campaign_health']}")
+            st.write(row["ai_recommendation"])
 
 st.divider()
 
 # -----------------------------
-# LLM-GENERATED AI INSIGHTS
+# OPTIONAL LIVE AI SECTION
 # -----------------------------
-st.subheader("LLM-Generated AI Insights")
+show_llm = st.checkbox("Show live AI campaign insights")
 
-if client is None:
-    st.info("AI insights are currently disabled because no API key is configured.")
-elif len(filtered_optimizer) > 0:
-    llm_view = filtered_optimizer[
-        [
-            "campaign_name",
-            "avg_roi",
-            "avg_cpa",
-            "avg_cvr",
-            "avg_ctr",
-            "performance_score",
-            "campaign_health",
-            "budget_action"
-        ]
-    ].copy().head(5)
+if show_llm:
+    st.subheader("Live AI Insights")
+    if client is None:
+        st.info("Live AI insights are not available because Groq is not configured.")
+    elif len(filtered_optimizer) > 0:
+        llm_view = filtered_optimizer[
+            [
+                "campaign_name",
+                "avg_roi",
+                "avg_cpa",
+                "avg_cvr",
+                "avg_ctr",
+                "performance_score",
+                "campaign_health",
+                "budget_action"
+            ]
+        ].copy().head(3)
 
-    for _, row in llm_view.iterrows():
-        with st.expander(f"{row['campaign_name']} — AI Insight"):
-            insight = generate_llm_insight(
-                campaign_name=row["campaign_name"],
-                avg_roi=row["avg_roi"],
-                avg_cpa=row["avg_cpa"],
-                avg_cvr=row["avg_cvr"],
-                avg_ctr=row["avg_ctr"],
-                performance_score=row["performance_score"],
-                campaign_health=row["campaign_health"],
-                budget_action=row["budget_action"]
-            )
-            st.write(insight)
-else:
-    st.info("No campaigns available for AI insights.")
+        for _, row in llm_view.iterrows():
+            with st.expander(f"{row['campaign_name']} — AI Insight"):
+                insight = generate_llm_insight(
+                    campaign_name=row["campaign_name"],
+                    avg_roi=row["avg_roi"],
+                    avg_cpa=row["avg_cpa"],
+                    avg_cvr=row["avg_cvr"],
+                    avg_ctr=row["avg_ctr"],
+                    performance_score=row["performance_score"],
+                    campaign_health=row["campaign_health"],
+                    budget_action=row["budget_action"]
+                )
+                st.write(insight)
 
 st.divider()
 
 # -----------------------------
-# ANOMALY MONITOR
+# RISK ALERTS
 # -----------------------------
-st.subheader("Anomaly Monitor")
+st.subheader("Performance Risk Alerts")
 
 if len(filtered_anomaly) > 0:
-    anomaly_cols = [
+    risk_cols = [
         "date", "campaign_name", "spend", "ctr_sql", "cvr_sql",
         "roi_sql", "python_anomaly_score", "python_anomaly_label", "anomaly_flag"
     ]
-    available_anomaly_cols = [col for col in anomaly_cols if col in filtered_anomaly.columns]
+    available_cols = [col for col in risk_cols if col in filtered_anomaly.columns]
+
     sort_cols = [col for col in ["python_anomaly_score", "date"] if col in filtered_anomaly.columns]
 
-    st.dataframe(
-        filtered_anomaly[available_anomaly_cols].sort_values(
-            by=sort_cols,
-            ascending=False
-        ).head(50),
-        use_container_width=True
+    risk_df = (
+        filtered_anomaly[available_cols]
+        .sort_values(by=sort_cols, ascending=False)
+        .head(20)
+        .reset_index(drop=True)
     )
-else:
-    st.info("No anomaly data available.")
+    st.dataframe(risk_df, use_container_width=True, hide_index=True)
 
 st.divider()
 
 # -----------------------------
 # TREND VIEW
 # -----------------------------
-st.subheader("Performance Trend Over Time")
+st.subheader("Performance Trend")
 
 if len(filtered_anomaly) > 0 and "date" in filtered_anomaly.columns:
     metric_options = [
@@ -301,7 +355,7 @@ if len(filtered_anomaly) > 0 and "date" in filtered_anomaly.columns:
     ]
 
     if len(metric_options) > 0:
-        metric_choice = st.selectbox("Select a metric to visualize", metric_options)
+        metric_choice = st.selectbox("Select a metric", metric_options)
 
         trend_df = filtered_anomaly.copy()
 
@@ -310,34 +364,19 @@ if len(filtered_anomaly) > 0 and "date" in filtered_anomaly.columns:
 
         chart_df = trend_df.set_index("date")[[metric_choice]]
         st.line_chart(chart_df)
-    else:
-        st.info("No numeric trend metrics available.")
-else:
-    st.info("No trend data available.")
 
 st.divider()
 
 # -----------------------------
-# EXECUTIVE SUMMARY
+# SUMMARY
 # -----------------------------
-st.subheader("Executive Summary")
+st.subheader("Project Summary")
+st.markdown("""
+This prototype demonstrates how campaign performance data can be transformed into an **AI-assisted optimization engine**
+using a combination of **SQL analytics, Python-based campaign scoring, anomaly detection, and recommendation logic**.
 
-healthy_count = (filtered_score["campaign_health"] == "Healthy").sum() if "campaign_health" in filtered_score.columns else 0
-watchlist_count = (filtered_score["campaign_health"] == "Watchlist").sum() if "campaign_health" in filtered_score.columns else 0
-critical_count = (filtered_score["campaign_health"] == "Critical").sum() if "campaign_health" in filtered_score.columns else 0
-
-increase_count = filtered_optimizer["budget_action"].astype(str).str.contains("Increase", na=False).sum() if "budget_action" in filtered_optimizer.columns else 0
-decrease_count = filtered_optimizer["budget_action"].astype(str).str.contains("Decrease", na=False).sum() if "budget_action" in filtered_optimizer.columns else 0
-
-summary = f"""
-- **{healthy_count}** campaigns are classified as Healthy.  
-- **{watchlist_count}** campaigns are on the Watchlist.  
-- **{critical_count}** campaigns are classified as Critical.  
-- **{increase_count}** campaigns are recommended for budget increases.  
-- **{decrease_count}** campaigns are recommended for budget reductions.  
-- Average ROI across the filtered set is **{avg_roi}**.  
-- Average CPA across the filtered set is **{avg_cpa}**.  
-
-Overall, the engine highlights where spend can be scaled efficiently and where budget should be reduced to improve advertiser monetization efficiency.
-"""
-st.markdown(summary)
+It helps identify:
+- which campaigns are performing efficiently,
+- where risk signals are emerging,
+- and where budget should be scaled, maintained, or reduced.
+""")
