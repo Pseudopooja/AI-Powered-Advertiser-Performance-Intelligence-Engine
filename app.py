@@ -1,7 +1,10 @@
 import os
 import pandas as pd
 import streamlit as st
-from openai import OpenAI
+import os
+from groq import Groq
+
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 st.set_page_config(
     page_title="Advertiser Performance Intelligence Engine",
